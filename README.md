@@ -290,3 +290,52 @@ Before proposing major architectural changes, please open an issue or discussion
 This project is open source.
 
 See [LICENSE](LICENSE) for details.
+## Workout sessions
+
+The home screen now shows locally saved workout history, newest first. Choose
+**New session**, set a name and date, and add any number of exercises. Strength
+exercises record repetitions separately for each set. Cardio exercises record
+minutes and kilometres (zero distance is allowed for stationary cardio).
+Exercises can be edited or removed before saving. Tap a saved session to see
+its full training details. The exercise library remains accessible from the
+home screen toolbar.
+
+Saved sessions persist on this device using local preferences; cloud sync is
+not implemented. Unsaved sessions are not restored after closing the app.
+Run `flutter test` and `flutter analyze` to verify this flow.
+
+## Dashboard, plans and profile
+
+The FitTrack dashboard shows real weekly session/set/cardio totals, recent
+completed sessions, and five destinations: start/resume, previous sessions,
+exercise ideas, Coach / Plan, and My profile. Existing saved workouts migrate
+on first use; the old storage key is preserved.
+
+Active sessions persist locally when activities are added, edited or removed.
+Finish a session to add it to history. Today's planned targets are copied when
+starting a session and remain separate from actual logged results. Plans can
+be created, edited and deleted for a chosen date. Profile measurements support
+weight (kg), arm/waist/chest circumference (cm), dated history and changes from
+the first measurement. Unsaved activity and measurement forms are not persisted.
+
+### Exercise idea feed
+
+Configure a server feed at build time:
+
+```sh
+flutter run --dart-define=EXERCISE_IDEAS_URL=https://your-server.example/api/v1/exercise-ideas
+```
+
+The endpoint must return a JSON array, or an object with an `items` array:
+
+```json
+{"items":[{"name":"Squat","category":"strength","tips":"Movement guidance supplied by your server.","video_url":"https://your-server.example/videos/squat.mp4"}]}
+```
+
+`description` is accepted as a fallback for `tips`. Videos are loaded only when
+the user taps Watch movement. Use HTTPS URLs compatible with the platform video
+player (e.g. MP4); web deployments also need appropriate server CORS headers.
+The existing Go exercise catalog can supply names/descriptions but does not yet
+provide video URLs. No feed or media service is deployed by this change. Without
+a configured endpoint, Exercise ideas shows an explicit disconnected state.
+Workouts, plans and measurements remain available offline.
