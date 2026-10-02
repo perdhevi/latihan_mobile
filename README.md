@@ -339,3 +339,29 @@ The existing Go exercise catalog can supply names/descriptions but does not yet
 provide video URLs. No feed or media service is deployed by this change. Without
 a configured endpoint, Exercise ideas shows an explicit disconnected state.
 Workouts, plans and measurements remain available offline.
+
+## Go account integration
+
+Open **Profile → Cloud account** to sign in or register with the Go server's
+built-in JWT provider. New accounts are prompted to create a cloud display name.
+The screen shows completed cloud sessions, including repetitions, weights,
+cardio minutes and BPM, with refresh and cursor pagination. Access tokens refresh
+automatically. Credentials are kept in memory only; closing the screen requires
+signing in again. External identity-provider sign-in is not yet implemented.
+
+Enter the base URL ending in `/api/v1/`, or set its initial value at build time:
+
+```sh
+flutter run --dart-define=FITNESS_API_URL=http://10.0.2.2:8080/api/v1/
+```
+
+`10.0.2.2` addresses the host from the Android emulator. Android debug builds
+allow HTTP for local development; use HTTPS for release builds and real accounts.
+For physical devices, use a reachable server address; the Go Compose stack binds
+to localhost by default. Browser builds require server CORS configuration.
+
+Cloud history is viewed separately from local history. This integration does
+not upload, merge or delete local sessions, plans or measurements. The Go API no
+longer exposes `/exercises`; the local library and separate exercise idea feed
+remain independent. The API currently has no distance field, so future upload
+work must account for locally recorded kilometres rather than silently dropping them.

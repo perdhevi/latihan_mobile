@@ -4,6 +4,7 @@ import 'package:provider/provider.dart';
 import '../../core/fitness_store.dart';
 import '../dashboard/dashboard_screen.dart';
 import '../sessions/sessions_screen.dart';
+import '../cloud/cloud_screen.dart';
 
 const metricLabels = {
   'weight': 'Weight (kg)',
@@ -70,6 +71,12 @@ class _ProfileScreenState extends State<ProfileScreen> {
             child: const Text('Save profile'),
           ),
           const SizedBox(height: 24),
+          ListTile(
+            leading: const Icon(Icons.cloud_outlined),
+            title: const Text('Cloud account'),
+            subtitle: const Text('Connect to your Go fitness server'),
+            onTap: () => openScreen(context, const CloudScreen()),
+          ),
           Text(
             'Your progress',
             style: Theme.of(context).textTheme.headlineSmall,
