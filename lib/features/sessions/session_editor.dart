@@ -1,57 +1,69 @@
 import 'package:flutter/material.dart';
 
 import 'session.dart';
-import 'sessions_screen.dart';
 
-class SessionEditor extends StatefulWidget {
-  final Future<void> Function(WorkoutSession) onSave;
-  final bool planning;
-  final WorkoutSession? initial;
-  const SessionEditor({
-    super.key,
-    required this.onSave,
-    this.planning = false,
-    this.initial,
-  });
-  @override
-  State<SessionEditor> createState() => _SessionEditorState();
+/// Validates a number against the API's bounds. [above] excludes [min] itself.
+String? numberError(
+  String? value,
+  num min,
+  num max, {
+  bool integer = false,
+  bool above = false,
+  bool optional = false,
+}) {
+  final text = (value ?? '').trim();
+  if (optional && text.isEmpty) return null;
+  final number = integer
+      ? int.tryParse(text)
+      : double.tryParse(text.replaceAll(',', '.'));
+  if (number == null ||
+      !number.isFinite ||
+      number > max ||
+      (above ? number <= min : number < min)) {
+    return 'Enter a ${integer ? 'whole ' : ''}number '
+        '${above ? 'above $min, up to' : 'from $min to'} $max';
+  }
+  return null;
 }
 
-class _SessionEditorState extends State<SessionEditor> {
-  final name = TextEditingController(text: 'Workout');
-  final trainings = <Training>[];
-  DateTime date = DateTime.now();
+class PlanEditor extends StatefulWidget {
+  final Future<void> Function(Plan) onSave;
+  final Plan? initial;
+  const PlanEditor({super.key, required this.onSave, this.initial});
+  @override
+  State<PlanEditor> createState() => _PlanEditorState();
+}
+
+class _PlanEditorState extends State<PlanEditor> {
+  late final name = TextEditingController(
+    text: widget.initial?.name ?? 'Training plan',
+  );
+  late final notes = TextEditingController(text: widget.initial?.notes);
+  late final exercises = [...?widget.initial?.exercises];
   bool saving = false;
   bool saved = false;
   String? error;
-  @override
-  void initState() {
-    super.initState();
-    name.text =
-        widget.initial?.name ?? (widget.planning ? 'Training plan' : 'Workout');
-    date = widget.initial?.date ?? DateTime.now();
-    trainings.addAll(widget.initial?.trainings ?? []);
-  }
 
   @override
   void dispose() {
     name.dispose();
+    notes.dispose();
     super.dispose();
   }
 
-  Future<void> addTraining({int? index}) async {
-    final training = await Navigator.of(context).push<Training>(
+  Future<void> editExercise({int? index}) async {
+    final exercise = await Navigator.of(context).push<Exercise>(
       MaterialPageRoute(
         builder: (_) =>
-            TrainingEditor(initial: index == null ? null : trainings[index]),
+            ExerciseEditor(initial: index == null ? null : exercises[index]),
       ),
     );
-    if (training != null && mounted) {
+    if (exercise != null && mounted) {
       setState(() {
         if (index == null) {
-          trainings.add(training);
+          exercises.add(exercise);
         } else {
-          trainings[index] = training;
+          exercises[index] = exercise;
         }
         error = null;
       });
@@ -59,9 +71,9 @@ class _SessionEditorState extends State<SessionEditor> {
   }
 
   Future<void> save() async {
-    if (name.text.trim().isEmpty || trainings.isEmpty) {
+    if (name.text.trim().isEmpty || exercises.isEmpty) {
       setState(
-        () => error = 'Enter a session name and add at least one exercise.',
+        () => error = 'Enter a plan name and add at least one exercise.',
       );
       return;
     }
@@ -71,13 +83,11 @@ class _SessionEditorState extends State<SessionEditor> {
     });
     try {
       await widget.onSave(
-        WorkoutSession(
-          id:
-              widget.initial?.id ??
-              DateTime.now().microsecondsSinceEpoch.toString(),
+        Plan(
+          id: widget.initial?.id ?? newId(),
           name: name.text.trim(),
-          date: date,
-          trainings: List.of(trainings),
+          notes: notes.text.trim(),
+          exercises: List.of(exercises),
         ),
       );
       if (!mounted) return;
@@ -106,8 +116,8 @@ class _SessionEditorState extends State<SessionEditor> {
       final discard = await showDialog<bool>(
         context: context,
         builder: (context) => AlertDialog(
-          title: const Text('Discard this session?'),
-          content: const Text('Unsaved training will be lost.'),
+          title: const Text('Discard this plan?'),
+          content: const Text('Unsaved changes will be lost.'),
           actions: [
             TextButton(
               onPressed: () => Navigator.pop(context, false),
@@ -128,9 +138,7 @@ class _SessionEditorState extends State<SessionEditor> {
       }
     },
     child: Scaffold(
-      appBar: AppBar(
-        title: Text(widget.planning ? 'Training plan' : 'New session'),
-      ),
+      appBar: AppBar(title: const Text('Training plan')),
       body: AbsorbPointer(
         absorbing: saving,
         child: ListView(
@@ -138,45 +146,39 @@ class _SessionEditorState extends State<SessionEditor> {
           children: [
             TextField(
               controller: name,
+              maxLength: 200,
               decoration: const InputDecoration(
-                labelText: 'Session name',
-                border: OutlineInputBorder(),
+                labelText: 'Plan name',
+                counterText: '',
               ),
             ),
-            ListTile(
-              contentPadding: EdgeInsets.zero,
-              title: const Text('Session date'),
-              subtitle: Text(sessionDate(date)),
-              trailing: const Icon(Icons.calendar_today),
-              onTap: () async {
-                final selected = await showDatePicker(
-                  context: context,
-                  initialDate: date,
-                  firstDate: DateTime(2000),
-                  lastDate: widget.planning
-                      ? DateTime(DateTime.now().year + 5)
-                      : DateTime.now(),
-                );
-                if (selected != null && mounted) {
-                  setState(() => date = selected);
-                }
-              },
+            const SizedBox(height: 12),
+            TextField(
+              controller: notes,
+              maxLength: 4000,
+              minLines: 1,
+              maxLines: 4,
+              decoration: const InputDecoration(
+                labelText: 'Notes (optional)',
+                counterText: '',
+              ),
             ),
-            for (var i = 0; i < trainings.length; i++)
+            const SizedBox(height: 12),
+            for (var i = 0; i < exercises.length; i++)
               Card(
                 child: ListTile(
-                  title: Text(trainings[i].name),
-                  subtitle: Text(trainings[i].summary),
-                  onTap: () => addTraining(index: i),
+                  title: Text(exercises[i].name),
+                  subtitle: Text(exercises[i].summary),
+                  onTap: () => editExercise(index: i),
                   trailing: IconButton(
                     tooltip: 'Remove exercise',
                     icon: const Icon(Icons.delete_outline),
-                    onPressed: () => setState(() => trainings.removeAt(i)),
+                    onPressed: () => setState(() => exercises.removeAt(i)),
                   ),
                 ),
               ),
             OutlinedButton.icon(
-              onPressed: () => addTraining(),
+              onPressed: exercises.length >= 100 ? null : () => editExercise(),
               icon: const Icon(Icons.add),
               label: const Text('Add exercise'),
             ),
@@ -191,13 +193,7 @@ class _SessionEditorState extends State<SessionEditor> {
             const SizedBox(height: 16),
             FilledButton(
               onPressed: saving ? null : save,
-              child: Text(
-                saving
-                    ? 'Saving…'
-                    : widget.planning
-                    ? 'Save plan'
-                    : 'Save session',
-              ),
+              child: Text(saving ? 'Saving…' : 'Save plan'),
             ),
           ],
         ),
@@ -206,69 +202,65 @@ class _SessionEditorState extends State<SessionEditor> {
   );
 }
 
-class TrainingEditor extends StatefulWidget {
-  final Training? initial;
-  final Future<void> Function(Training)? onSave;
-  const TrainingEditor({super.key, this.initial, this.onSave});
+typedef _SetFields = ({
+  TextEditingController reps,
+  TextEditingController weight,
+});
+
+class ExerciseEditor extends StatefulWidget {
+  final Exercise? initial;
+  final Future<void> Function(Exercise)? onSave;
+  const ExerciseEditor({super.key, this.initial, this.onSave});
   @override
-  State<TrainingEditor> createState() => _TrainingEditorState();
+  State<ExerciseEditor> createState() => _ExerciseEditorState();
 }
 
-class _TrainingEditorState extends State<TrainingEditor> {
+class _ExerciseEditorState extends State<ExerciseEditor> {
   final form = GlobalKey<FormState>();
   late final TextEditingController name;
   late final TextEditingController minutes;
-  late final TextEditingController distance;
-  late final List<TextEditingController> reps;
+  late final TextEditingController bpm;
+  late final List<_SetFields> sets;
   late bool cardio;
   bool saving = false;
   String? saveError;
+
+  _SetFields fields(String reps, String weight) => (
+    reps: TextEditingController(text: reps),
+    weight: TextEditingController(text: weight),
+  );
+
   @override
   void initState() {
     super.initState();
     final initial = widget.initial;
     name = TextEditingController(text: initial?.name);
-    minutes = TextEditingController(text: initial?.minutes?.toString());
-    distance = TextEditingController(text: initial?.kilometers?.toString());
+    minutes = TextEditingController(
+      text: initial?.minutes == null ? null : formatNumber(initial!.minutes!),
+    );
+    bpm = TextEditingController(text: initial?.avgBpm?.toString());
     cardio = initial?.isCardio ?? false;
-    reps = (initial != null && initial.reps.isNotEmpty ? initial.reps : [10])
-        .map((r) => TextEditingController(text: '$r'))
-        .toList();
+    sets = [
+      for (final s in initial?.sets ?? const <ExerciseSet>[])
+        fields('${s.repetitions}', formatNumber(s.weightKg)),
+    ];
+    if (sets.isEmpty) sets.add(fields('10', '0'));
   }
 
   @override
   void dispose() {
     name.dispose();
     minutes.dispose();
-    distance.dispose();
-    for (final r in reps) {
-      r.dispose();
+    bpm.dispose();
+    for (final s in sets) {
+      s.reps.dispose();
+      s.weight.dispose();
     }
     super.dispose();
   }
 
-  String? positive(
-    String? value, {
-    bool integer = false,
-    bool allowZero = false,
-  }) {
-    final number = integer
-        ? int.tryParse(value ?? '')
-        : double.tryParse((value ?? '').replaceAll(',', '.'));
-    if (number == null ||
-        !number.isFinite ||
-        (allowZero ? number < 0 : number <= 0)) {
-      return allowZero
-          ? 'Enter zero or a positive number'
-          : integer
-          ? 'Enter a positive whole number'
-          : 'Enter a positive number';
-    }
-    return null;
-  }
-
   double decimal(TextEditingController controller) =>
-      double.parse(controller.text.replaceAll(',', '.'));
+      double.parse(controller.text.trim().replaceAll(',', '.'));
   @override
   Widget build(BuildContext context) => Scaffold(
     appBar: AppBar(
@@ -281,9 +273,11 @@ class _TrainingEditorState extends State<TrainingEditor> {
         children: [
           TextFormField(
             controller: name,
+            maxLength: 200,
             decoration: const InputDecoration(
               labelText: 'Exercise name',
               hintText: 'e.g. Bench press or Running',
+              counterText: '',
             ),
             validator: (value) => value == null || value.trim().isEmpty
                 ? 'Enter an exercise name'
@@ -331,56 +325,81 @@ class _TrainingEditorState extends State<TrainingEditor> {
               keyboardType: const TextInputType.numberWithOptions(
                 decimal: true,
               ),
-              validator: (value) => positive(value),
+              validator: (value) => numberError(value, 0, 1440, above: true),
             ),
+            const SizedBox(height: 12),
             TextFormField(
-              controller: distance,
+              controller: bpm,
               decoration: const InputDecoration(
-                labelText: 'Distance (km)',
-                helperText: 'Use 0 for stationary cardio.',
+                labelText: 'Average heart rate (BPM)',
+                helperText: 'Optional',
               ),
-              keyboardType: const TextInputType.numberWithOptions(
-                decimal: true,
-              ),
-              validator: (value) => positive(value, allowZero: true),
+              keyboardType: TextInputType.number,
+              validator: (value) =>
+                  numberError(value, 1, 300, integer: true, optional: true),
             ),
           ] else ...[
             Text(
-              '${reps.length} sets',
+              '${sets.length} sets',
               style: Theme.of(context).textTheme.titleMedium,
             ),
-            for (var i = 0; i < reps.length; i++)
-              Row(
-                key: ObjectKey(reps[i]),
-                children: [
-                  Expanded(
-                    child: TextFormField(
-                      controller: reps[i],
-                      decoration: InputDecoration(
-                        labelText: 'Set ${i + 1} reps',
+            const Text('Use 0 kg for bodyweight.'),
+            const SizedBox(height: 8),
+            for (var i = 0; i < sets.length; i++)
+              Padding(
+                key: ObjectKey(sets[i].reps),
+                padding: const EdgeInsets.only(bottom: 12),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Expanded(
+                      child: TextFormField(
+                        controller: sets[i].reps,
+                        decoration: InputDecoration(
+                          labelText: 'Set ${i + 1} reps',
+                        ),
+                        keyboardType: TextInputType.number,
+                        validator: (value) =>
+                            numberError(value, 1, 1000, integer: true),
                       ),
-                      keyboardType: TextInputType.number,
-                      validator: (value) => positive(value, integer: true),
                     ),
-                  ),
-                  IconButton(
-                    tooltip: 'Remove set',
-                    onPressed: reps.length == 1
-                        ? null
-                        : () => setState(() {
-                            final removed = reps.removeAt(i);
-                            WidgetsBinding.instance.addPostFrameCallback(
-                              (_) => removed.dispose(),
-                            );
-                          }),
-                    icon: const Icon(Icons.remove_circle_outline),
-                  ),
-                ],
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: TextFormField(
+                        controller: sets[i].weight,
+                        decoration: const InputDecoration(
+                          labelText: 'Weight (kg)',
+                        ),
+                        keyboardType: const TextInputType.numberWithOptions(
+                          decimal: true,
+                        ),
+                        validator: (value) => numberError(value, 0, 2000),
+                      ),
+                    ),
+                    IconButton(
+                      tooltip: 'Remove set',
+                      onPressed: sets.length == 1
+                          ? null
+                          : () => setState(() {
+                              final removed = sets.removeAt(i);
+                              WidgetsBinding.instance.addPostFrameCallback((_) {
+                                removed.reps.dispose();
+                                removed.weight.dispose();
+                              });
+                            }),
+                      icon: const Icon(Icons.remove_circle_outline),
+                    ),
+                  ],
+                ),
               ),
             TextButton.icon(
-              onPressed: () => setState(
-                () => reps.add(TextEditingController(text: reps.last.text)),
-              ),
+              onPressed: sets.length >= 100
+                  ? null
+                  : () => setState(
+                      () => sets.add(
+                        fields(sets.last.reps.text, sets.last.weight.text),
+                      ),
+                    ),
               icon: const Icon(Icons.add),
               label: const Text('Add set'),
             ),
@@ -396,21 +415,30 @@ class _TrainingEditorState extends State<TrainingEditor> {
                 ? null
                 : () async {
                     if (!form.currentState!.validate()) return;
-                    final training = Training(
+                    final exercise = Exercise(
+                      planExerciseId: widget.initial?.planExerciseId,
                       name: name.text.trim(),
-                      reps: cardio
-                          ? []
-                          : reps.map((r) => int.parse(r.text)).toList(),
+                      sets: cardio
+                          ? const []
+                          : [
+                              for (final s in sets)
+                                ExerciseSet(
+                                  int.parse(s.reps.text.trim()),
+                                  decimal(s.weight),
+                                ),
+                            ],
                       minutes: cardio ? decimal(minutes) : null,
-                      kilometers: cardio ? decimal(distance) : null,
+                      avgBpm: cardio && bpm.text.trim().isNotEmpty
+                          ? int.parse(bpm.text.trim())
+                          : null,
                     );
                     setState(() {
                       saving = true;
                       saveError = null;
                     });
                     try {
-                      await widget.onSave?.call(training);
-                      if (context.mounted) Navigator.of(context).pop(training);
+                      await widget.onSave?.call(exercise);
+                      if (context.mounted) Navigator.of(context).pop(exercise);
                     } catch (_) {
                       if (mounted) {
                         setState(() {

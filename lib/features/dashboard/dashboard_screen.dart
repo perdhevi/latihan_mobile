@@ -39,11 +39,11 @@ class DashboardScreen extends StatelessWidget {
         .where((s) => !s.date.isBefore(week) && !s.date.isAfter(now))
         .toList();
     final sets = recent
-        .expand((s) => s.trainings)
-        .fold<int>(0, (total, t) => total + t.reps.length);
+        .expand((s) => s.exercises)
+        .fold<int>(0, (total, e) => total + e.sets.length);
     final minutes = recent
-        .expand((s) => s.trainings)
-        .fold<double>(0, (total, t) => total + (t.minutes ?? 0));
+        .expand((s) => s.exercises)
+        .fold<double>(0, (total, e) => total + (e.minutes ?? 0));
     return Scaffold(
       body: SafeArea(
         child: store.loading
@@ -148,8 +148,20 @@ class DashboardScreen extends StatelessWidget {
                         onPressed: store.busy
                             ? null
                             : () async {
+                                Plan? plan;
+                                if (store.active == null &&
+                                    store.plans.isNotEmpty) {
+                                  final choice = await choosePlan(
+                                    context,
+                                    store.plans,
+                                  );
+                                  if (choice == null || !context.mounted) {
+                                    return;
+                                  }
+                                  plan = choice.$1;
+                                }
                                 await attempt(context, () async {
-                                  await store.start();
+                                  await store.start(plan);
                                   if (context.mounted) {
                                     openScreen(
                                       context,
@@ -196,13 +208,34 @@ class DashboardScreen extends StatelessWidget {
   }
 }
 
+/// Asks which plan to train against. Null means dismissed; `(null,)` means
+/// no plan.
+Future<(Plan?,)?> choosePlan(BuildContext context, List<Plan> plans) =>
+    showDialog<(Plan?,)>(
+      context: context,
+      builder: (context) => SimpleDialog(
+        title: const Text('Start from a plan?'),
+        children: [
+          for (final plan in plans)
+            SimpleDialogOption(
+              onPressed: () => Navigator.pop(context, (plan,)),
+              child: Text(plan.name),
+            ),
+          SimpleDialogOption(
+            onPressed: () => Navigator.pop(context, (null,)),
+            child: const Text('No plan, train freely'),
+          ),
+        ],
+      ),
+    );
+
 Widget sessionCard(BuildContext context, WorkoutSession session) => Card(
   child: ListTile(
     contentPadding: const EdgeInsets.all(16),
     leading: const Icon(Icons.fitness_center, color: Color(0xFFFF8A65)),
     title: Text(session.name),
     subtitle: Text(
-      '${sessionDate(session.date)} · ${session.trainings.length} activities',
+      '${sessionDate(session.date)} · ${session.exercises.length} activities',
     ),
     trailing: const Icon(Icons.chevron_right),
     onTap: () => openScreen(context, SessionDetailScreen(session: session)),

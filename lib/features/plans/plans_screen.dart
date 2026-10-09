@@ -5,17 +5,14 @@ import '../../core/fitness_store.dart';
 import '../dashboard/dashboard_screen.dart';
 import '../sessions/session.dart';
 import '../sessions/session_editor.dart';
-import '../sessions/sessions_screen.dart';
 
 class PlansScreen extends StatelessWidget {
   const PlansScreen({super.key});
   @override
   Widget build(BuildContext context) {
     final store = context.watch<FitnessStore>();
-    void edit([WorkoutSession? plan]) => openScreen(
-      context,
-      SessionEditor(planning: true, initial: plan, onSave: store.savePlan),
-    );
+    void edit([Plan? plan]) =>
+        openScreen(context, PlanEditor(initial: plan, onSave: store.savePlan));
     return Scaffold(
       appBar: AppBar(title: const Text('Coach / Plan')),
       floatingActionButton: FloatingActionButton.extended(
@@ -32,17 +29,17 @@ class PlansScreen extends StatelessWidget {
           ),
           const SizedBox(height: 8),
           const Text(
-            'Choose a date and activities with target sets, reps or cardio distance. Today’s plans appear when you start a session.',
+            'Build reusable plans with target sets, reps, weights or cardio minutes. Pick one when you start a session.',
           ),
           const SizedBox(height: 20),
           if (store.plans.isEmpty)
-            const Text('No plans yet. Create your first training day.'),
+            const Text('No plans yet. Create your first training plan.'),
           for (final plan in store.plans)
             Card(
               child: ListTile(
                 title: Text(plan.name),
                 subtitle: Text(
-                  '${sessionDate(plan.date)} · ${plan.trainings.length} activities\n${plan.trainings.map((t) => t.name).join(', ')}',
+                  '${plan.exercises.length} activities\n${plan.exercises.map((e) => e.name).join(', ')}',
                 ),
                 isThreeLine: true,
                 onTap: () => edit(plan),
@@ -72,11 +69,7 @@ class PlansScreen extends StatelessWidget {
                           if (confirmed == true && context.mounted) {
                             await attempt(
                               context,
-                              () => store.change(
-                                () => store.plans.removeWhere(
-                                  (p) => p.id == plan.id,
-                                ),
-                              ),
+                              () => store.deletePlan(plan.id),
                             );
                           }
                         },

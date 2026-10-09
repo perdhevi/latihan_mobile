@@ -294,29 +294,56 @@ See [LICENSE](LICENSE) for details.
 
 The home screen now shows locally saved workout history, newest first. Choose
 **New session**, set a name and date, and add any number of exercises. Strength
-exercises record repetitions separately for each set. Cardio exercises record
-minutes and kilometres (zero distance is allowed for stationary cardio).
+exercises record repetitions and weight (0 kg for bodyweight) for each set.
+Cardio exercises record minutes and an optional average heart rate.
 Exercises can be edited or removed before saving. Tap a saved session to see
 its full training details. The exercise library remains accessible from the
 home screen toolbar.
 
-Saved sessions persist on this device using local preferences; cloud sync is
-not implemented. Unsaved sessions are not restored after closing the app.
+Saved sessions persist on this device in a local SQLite database and can be
+synchronized with the Go server (see Synchronization below). Unsaved sessions are not restored after closing the app.
 Run `flutter test` and `flutter analyze` to verify this flow.
 
 ## Dashboard, plans and profile
 
 The FitTrack dashboard shows real weekly session/set/cardio totals, recent
 completed sessions, and five destinations: start/resume, previous sessions,
-exercise ideas, Coach / Plan, and My profile. Existing saved workouts migrate
-on first use; the old storage key is preserved.
+exercise ideas, Coach / Plan, and My profile.
 
 Active sessions persist locally when activities are added, edited or removed.
-Finish a session to add it to history. Today's planned targets are copied when
-starting a session and remain separate from actual logged results. Plans can
-be created, edited and deleted for a chosen date. Profile measurements support
-weight (kg), arm/waist/chest circumference (cm), dated history and changes from
-the first measurement. Unsaved activity and measurement forms are not persisted.
+Finish a session to add it to history. Plans are reusable: choose one when
+starting a session and its exercises are snapshotted as that session's targets,
+separate from the logged results and unaffected by later plan edits. Session
+details show planned versus logged activities. Profile measurements support
+weight (kg), height (cm), body fat (%), waist/chest/hip circumference (cm),
+dated history and changes from the first measurement. Unsaved activity and
+measurement forms are not persisted.
+
+### Local database
+
+Data is stored in SQLite through [drift](https://drift.simonbinder.eu)
+(`lib/core/database.dart`), in a database named `latihan`. Tables, units and
+bounds follow the Go API's OpenAPI contract: `profiles`, `measurements`,
+`plans` and `sessions`. A plan or session keeps its exercises as a JSON column
+in the contract's shape (`sets` of `repetitions`/`weight_kg`, `minutes`,
+`avg_bpm`), because the API also replaces them as a whole. Every row records
+`created_at` and `updated_at` for future synchronization.
+
+After changing a table, regenerate `database.g.dart` and, once the app has
+shipped, raise `schemaVersion` and add a migration:
+
+```sh
+dart run build_runner build
+```
+
+### Export
+
+**Profile → Export my data** writes everything on the device to
+`latihan-export-<date>.json` and opens the system share sheet to save or send
+it. The document is laid out like the API's account export: `format`
+(`latihan-mobile-export/1`), `exported_at`, `user`, `measurements`, `plans`,
+`sessions`, plus `active_session` for a workout in progress. It contains local
+data only; cloud data is not included.
 
 ### Exercise idea feed
 
@@ -346,8 +373,8 @@ Open **Profile → Cloud account** to sign in or register with the Go server's
 built-in JWT provider. New accounts are prompted to create a cloud display name.
 The screen shows completed cloud sessions, including repetitions, weights,
 cardio minutes and BPM, with refresh and cursor pagination. Access tokens refresh
-automatically. Credentials are kept in memory only; closing the screen requires
-signing in again. External identity-provider sign-in is not yet implemented.
+automatically and the session is kept across restarts (see Synchronization).
+External identity-provider sign-in is not yet implemented.
 
 Enter the base URL ending in `/api/v1/`, or set its initial value at build time:
 
@@ -360,8 +387,57 @@ allow HTTP for local development; use HTTPS for release builds and real accounts
 For physical devices, use a reachable server address; the Go Compose stack binds
 to localhost by default. Browser builds require server CORS configuration.
 
-Cloud history is viewed separately from local history. This integration does
-not upload, merge or delete local sessions, plans or measurements. The Go API no
-longer exposes `/exercises`; the local library and separate exercise idea feed
-remain independent. The API currently has no distance field, so future upload
-work must account for locally recorded kilometres rather than silently dropping them.
+### Synchronization
+
+Signed in under **Profile → Cloud account**, the local database synchronizes
+with the Go server. The device stays the source of truth and works offline; a
+connection is needed only while a sync runs.
+
+- **When:** automatically when the app opens, when it returns to the foreground
+  (at most once a minute), and 5 seconds after you finish a session or save or
+  delete a plan, measurement or your name. **Sync now** runs it on demand.
+  Editing the session in progress does not trigger one; it is never synced.
+- **Staying signed in:** the server URL and refresh token are kept in the
+  platform keystore (`flutter_secure_storage`); the short-lived access token is
+  fetched again as needed and never stored. Signing out revokes the token and
+  forgets it but keeps your data. If the server ends the session you are signed
+  out with a message; if the app starts offline you stay signed in and it syncs
+  later.
+- **Automatic runs never interrupt you.** A problem (offline, a rejected record,
+  a different account) is shown on the Cloud account screen; nothing is lost.
+
+- **Order:** profile, plans, sessions, measurements, then queued deletions.
+- **IDs:** the server issues every ID and rejects client ones, so the table
+  `sync_links` maps each local row to its server record. Records first seen on
+  the server keep the server's ID locally.
+- **Changes:** a row is unsynced when its `updated_at` differs from the one
+  recorded at the last sync. Unsynced rows are created (`POST` with an
+  `Idempotency-Key`, so a retry after a lost response never duplicates) or
+  replaced (`PUT` with `If-Match`). The API has no change feed, so each sync
+  lists every collection and compares `updated_at`.
+- **Conflicts:** a record changed on both sides keeps the more recently updated
+  version. Local edits to a record deleted on the server bring it back.
+- **Deletions:** deleting a synced plan or measurement queues the server record
+  in `pending_deletes`. A plan that server sessions still use answers 409 and is
+  retried on the next sync.
+- **Plans in use:** the server freezes a plan's exercises once sessions use it
+  (`plan_in_use`); renames still apply. An edit to the exercises is uploaded as
+  a new plan and the old one stays for its sessions. Other devices that already
+  had the old plan will also receive the new one.
+- **Plan links:** a session's `plan_exercise_id` is re-pointed at the matching
+  entry of the server's current copy of the plan; if the plan has since
+  changed so no entry matches, the link is left out. The server also builds the
+  session's plan snapshot itself, from the plan as it is at upload time.
+- **Not synced:** the session in progress (the API has no such concept).
+- **One account per device.** Syncing with a different account is refused so
+  one person's data is never uploaded into another's.
+- **Failures:** a record the server rejects is listed and retried next time; a
+  connection or authorization error stops the sync and is safe to repeat.
+
+Tests: `test/sync_service_test.dart` runs against a fake server that models the
+API's behaviour. `test/sync_live_test.dart` runs the same flow against a real
+server and is skipped unless you pass it a URL (it registers a throwaway account):
+
+```sh
+flutter test test/sync_live_test.dart --dart-define=SYNC_LIVE_URL=http://localhost:8080/api/v1/
+```

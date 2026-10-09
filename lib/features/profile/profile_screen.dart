@@ -1,17 +1,61 @@
+import 'dart:convert';
+import 'dart:io';
+
 import 'package:flutter/material.dart';
+import 'package:path_provider/path_provider.dart';
 import 'package:provider/provider.dart';
+import 'package:share_plus/share_plus.dart';
 
 import '../../core/fitness_store.dart';
 import '../dashboard/dashboard_screen.dart';
+import '../sessions/session_editor.dart';
 import '../sessions/sessions_screen.dart';
 import '../cloud/cloud_screen.dart';
 
+// Keys, units and upper bounds follow the API's Measurement.
 const metricLabels = {
-  'weight': 'Weight (kg)',
-  'arm': 'Arm (cm)',
-  'waist': 'Waist (cm)',
-  'chest': 'Chest (cm)',
+  'weight_kg': 'Weight (kg)',
+  'height_cm': 'Height (cm)',
+  'body_fat_percent': 'Body fat (%)',
+  'waist_cm': 'Waist (cm)',
+  'chest_cm': 'Chest (cm)',
+  'hip_cm': 'Hip (cm)',
 };
+const metricLimits = {
+  'weight_kg': 1000,
+  'height_cm': 300,
+  'body_fat_percent': 100,
+  'waist_cm': 500,
+  'chest_cm': 500,
+  'hip_cm': 500,
+};
+
+/// Writes the device's data to a JSON file and opens the share sheet for it.
+Future<void> exportData(BuildContext context, FitnessStore store) async {
+  // iPads anchor the share sheet to the control that opened it.
+  final box = context.findRenderObject() as RenderBox?;
+  final origin = box == null ? null : box.localToGlobal(Offset.zero) & box.size;
+  try {
+    final directory = await getTemporaryDirectory();
+    final day = DateTime.now().toIso8601String().substring(0, 10);
+    final file = File('${directory.path}/latihan-export-$day.json');
+    await file.writeAsString(
+      const JsonEncoder.withIndent('  ').convert(await store.export()),
+    );
+    await SharePlus.instance.share(
+      ShareParams(
+        files: [XFile(file.path, mimeType: 'application/json')],
+        sharePositionOrigin: origin,
+      ),
+    );
+  } catch (_) {
+    if (context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Could not export your data.')),
+      );
+    }
+  }
+}
 
 class ProfileScreen extends StatefulWidget {
   const ProfileScreen({super.key});
@@ -52,16 +96,18 @@ class _ProfileScreenState extends State<ProfileScreen> {
           const SizedBox(height: 20),
           TextField(
             controller: name,
-            decoration: const InputDecoration(labelText: 'Your name'),
+            maxLength: 200,
+            decoration: const InputDecoration(
+              labelText: 'Your name',
+              counterText: '',
+            ),
           ),
           const SizedBox(height: 12),
           OutlinedButton(
             onPressed: store.busy
                 ? null
                 : () => attempt(context, () async {
-                    await store.change(
-                      () => store.profileName = name.text.trim(),
-                    );
+                    await store.saveProfileName(name.text.trim());
                     if (context.mounted) {
                       ScaffoldMessenger.of(context).showSnackBar(
                         const SnackBar(content: Text('Profile saved')),
@@ -76,6 +122,14 @@ class _ProfileScreenState extends State<ProfileScreen> {
             title: const Text('Cloud account'),
             subtitle: const Text('Connect to your Go fitness server'),
             onTap: () => openScreen(context, const CloudScreen()),
+          ),
+          ListTile(
+            leading: const Icon(Icons.download_outlined),
+            title: const Text('Export my data'),
+            subtitle: const Text(
+              'Save or share everything on this device as a JSON file',
+            ),
+            onTap: () => exportData(context, store),
           ),
           Text(
             'Your progress',
@@ -115,7 +169,11 @@ class _ProfileScreenState extends State<ProfileScreen> {
           for (final m in store.measurements)
             Card(
               child: ListTile(
-                title: Text(sessionDate(DateTime.parse(m['date'] as String))),
+                title: Text(
+                  sessionDate(
+                    DateTime.parse(m['measured_at'] as String).toLocal(),
+                  ),
+                ),
                 subtitle: Text(
                   [
                     for (final metric in metricLabels.entries)
@@ -149,11 +207,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                           if (yes == true && context.mounted) {
                             await attempt(
                               context,
-                              () => store.change(
-                                () => store.measurements.removeWhere(
-                                  (entry) => entry['id'] == m['id'],
-                                ),
-                              ),
+                              () => store.deleteMeasurement(m['id'] as String),
                             );
                           }
                         },
@@ -250,13 +304,13 @@ class _MeasurementEditorState extends State<MeasurementEditor> {
                   keyboardType: const TextInputType.numberWithOptions(
                     decimal: true,
                   ),
-                  validator: (value) {
-                    if (value == null || value.trim().isEmpty) return null;
-                    final n = double.tryParse(value.replaceAll(',', '.'));
-                    return n == null || !n.isFinite || n <= 0
-                        ? 'Enter a positive number'
-                        : null;
-                  },
+                  validator: (value) => numberError(
+                    value,
+                    0,
+                    metricLimits[metric.key]!,
+                    above: metric.key != 'body_fat_percent',
+                    optional: true,
+                  ),
                 ),
               ),
             if (error != null)
@@ -276,21 +330,13 @@ class _MeasurementEditorState extends State<MeasurementEditor> {
                         return;
                       }
                       await attempt(context, () async {
-                        await store.change(() {
-                          store.measurements.add({
-                            'id': newId(),
-                            'date': date.toIso8601String(),
-                            for (final field in fields.entries)
-                              if (field.value.text.trim().isNotEmpty)
-                                field.key: double.parse(
-                                  field.value.text.replaceAll(',', '.'),
-                                ),
-                          });
-                          store.measurements.sort(
-                            (a, b) => (b['date'] as String).compareTo(
-                              a['date'] as String,
-                            ),
-                          );
+                        await store.addMeasurement({
+                          'measured_at': date.toUtc().toIso8601String(),
+                          for (final field in fields.entries)
+                            if (field.value.text.trim().isNotEmpty)
+                              field.key: double.parse(
+                                field.value.text.trim().replaceAll(',', '.'),
+                              ),
                         });
                         if (context.mounted) Navigator.pop(context);
                       });

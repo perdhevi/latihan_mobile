@@ -12,21 +12,23 @@ class ActiveSessionScreen extends StatelessWidget {
   Future<void> log(
     BuildContext context,
     FitnessStore store, {
-    Training? target,
+    Exercise? target,
     int? index,
   }) async {
-    await Navigator.of(context).push<Training>(
+    await Navigator.of(context).push<Exercise>(
       MaterialPageRoute(
-        builder: (_) => TrainingEditor(
-          initial: index == null ? target : store.active!.trainings[index],
+        builder: (_) => ExerciseEditor(
+          initial: index == null
+              ? target?.logged()
+              : store.active!.exercises[index],
           onSave: (result) async {
-            final activities = [...store.active!.trainings];
+            final activities = [...store.active!.exercises];
             if (index == null) {
               activities.add(result);
             } else {
               activities[index] = result;
             }
-            await store.updateActive(store.active!.name, activities);
+            await store.updateActive(exercises: activities);
           },
         ),
       ),
@@ -43,6 +45,7 @@ class ActiveSessionScreen extends StatelessWidget {
         body: const Center(child: Text('Session completed.')),
       );
     }
+    final full = active.exercises.length >= 100;
     return Scaffold(
       appBar: AppBar(title: const Text('Active session')),
       body: AbsorbPointer(
@@ -64,18 +67,41 @@ class ActiveSessionScreen extends StatelessWidget {
                         style: Theme.of(context).textTheme.headlineSmall,
                       ),
                       trailing: IconButton(
-                        tooltip: 'Rename session',
+                        tooltip: 'Edit name and notes',
                         icon: const Icon(Icons.edit_outlined),
                         onPressed: () async {
                           var draftName = active.name;
-                          final name = await showDialog<String>(
+                          var draftNotes = active.notes;
+                          final saved = await showDialog<bool>(
                             context: context,
                             builder: (context) => AlertDialog(
-                              title: const Text('Session name'),
-                              content: TextFormField(
-                                initialValue: active.name,
-                                onChanged: (value) => draftName = value,
-                                autofocus: true,
+                              title: const Text('Session details'),
+                              content: Column(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  TextFormField(
+                                    initialValue: active.name,
+                                    onChanged: (value) => draftName = value,
+                                    autofocus: true,
+                                    maxLength: 200,
+                                    decoration: const InputDecoration(
+                                      labelText: 'Session name',
+                                      counterText: '',
+                                    ),
+                                  ),
+                                  const SizedBox(height: 12),
+                                  TextFormField(
+                                    initialValue: active.notes,
+                                    onChanged: (value) => draftNotes = value,
+                                    maxLength: 4000,
+                                    minLines: 1,
+                                    maxLines: 4,
+                                    decoration: const InputDecoration(
+                                      labelText: 'Notes (optional)',
+                                      counterText: '',
+                                    ),
+                                  ),
+                                ],
                               ),
                               actions: [
                                 TextButton(
@@ -85,7 +111,7 @@ class ActiveSessionScreen extends StatelessWidget {
                                 TextButton(
                                   onPressed: () {
                                     if (draftName.trim().isNotEmpty) {
-                                      Navigator.pop(context, draftName.trim());
+                                      Navigator.pop(context, true);
                                     }
                                   },
                                   child: const Text('Save'),
@@ -93,10 +119,13 @@ class ActiveSessionScreen extends StatelessWidget {
                               ],
                             ),
                           );
-                          if (name != null && context.mounted) {
+                          if (saved == true && context.mounted) {
                             await attempt(
                               context,
-                              () => store.updateActive(name, active.trainings),
+                              () => store.updateActive(
+                                name: draftName.trim(),
+                                notes: draftNotes.trim(),
+                              ),
                             );
                           }
                         },
@@ -107,53 +136,74 @@ class ActiveSessionScreen extends StatelessWidget {
                     ),
                     const SizedBox(height: 8),
                     Text(
-                      '${active.trainings.length} activities logged · Saved on this device',
+                      '${active.exercises.length} activities logged · Saved on this device',
                     ),
+                    if (active.notes.isNotEmpty) ...[
+                      const SizedBox(height: 8),
+                      Text(active.notes),
+                    ],
                   ],
                 ),
               ),
             ),
             const SizedBox(height: 18),
-            Text("Today's plan", style: Theme.of(context).textTheme.titleLarge),
-            const Text('Targets are a guide. Log your actual results below.'),
-            if (store.targets.isEmpty)
+            Text(
+              active.plan == null ? 'Plan' : 'Plan · ${active.plan!.name}',
+              style: Theme.of(context).textTheme.titleLarge,
+            ),
+            if (active.plan == null)
               const Padding(
                 padding: EdgeInsets.symmetric(vertical: 12),
                 child: Text(
-                  'No plan for today. Add an activity to train freely.',
+                  'No plan for this session. Add an activity to train freely.',
                 ),
-              ),
-            for (final target in store.targets)
-              Card(
-                child: ListTile(
-                  title: Text(target.name),
-                  subtitle: Text(target.summary),
-                  trailing: const Icon(Icons.add_circle_outline),
-                  onTap: () => log(context, store, target: target),
-                ),
-              ),
+              )
+            else
+              const Text('Targets are a guide. Log your actual results below.'),
+            for (final target in active.plan?.exercises ?? const <Exercise>[])
+              () {
+                // Each plan entry can be logged once; afterwards it opens the
+                // logged result.
+                final done = active.exercises.indexWhere(
+                  (e) => e.planExerciseId == target.id,
+                );
+                return Card(
+                  child: ListTile(
+                    title: Text(target.name),
+                    subtitle: Text(target.summary),
+                    trailing: Icon(
+                      done < 0 ? Icons.add_circle_outline : Icons.check_circle,
+                    ),
+                    onTap: done >= 0
+                        ? () => log(context, store, index: done)
+                        : full
+                        ? null
+                        : () => log(context, store, target: target),
+                  ),
+                );
+              }(),
             const SizedBox(height: 18),
             Text(
               'Logged activities',
               style: Theme.of(context).textTheme.titleLarge,
             ),
-            if (active.trainings.isEmpty)
+            if (active.exercises.isEmpty)
               const Padding(
                 padding: EdgeInsets.symmetric(vertical: 12),
                 child: Text(
                   'Nothing logged yet. Choose a planned activity or add your own.',
                 ),
               ),
-            for (var i = 0; i < active.trainings.length; i++)
+            for (var i = 0; i < active.exercises.length; i++)
               Card(
                 child: ListTile(
                   leading: Icon(
-                    active.trainings[i].isCardio
+                    active.exercises[i].isCardio
                         ? Icons.directions_run
                         : Icons.fitness_center,
                   ),
-                  title: Text(active.trainings[i].name),
-                  subtitle: Text(active.trainings[i].summary),
+                  title: Text(active.exercises[i].name),
+                  subtitle: Text(active.exercises[i].summary),
                   onTap: () => log(context, store, index: i),
                   trailing: IconButton(
                     tooltip: 'Remove activity',
@@ -161,8 +211,7 @@ class ActiveSessionScreen extends StatelessWidget {
                     onPressed: () => attempt(
                       context,
                       () => store.updateActive(
-                        active.name,
-                        [...active.trainings]..removeAt(i),
+                        exercises: [...active.exercises]..removeAt(i),
                       ),
                     ),
                   ),
@@ -170,13 +219,13 @@ class ActiveSessionScreen extends StatelessWidget {
               ),
             const SizedBox(height: 16),
             OutlinedButton.icon(
-              onPressed: () => log(context, store),
+              onPressed: full ? null : () => log(context, store),
               icon: const Icon(Icons.add),
               label: const Text('Add activity'),
             ),
             const SizedBox(height: 12),
             FilledButton(
-              onPressed: active.trainings.isEmpty || store.busy
+              onPressed: active.exercises.isEmpty || store.busy
                   ? null
                   : () async {
                       await attempt(context, () async {
