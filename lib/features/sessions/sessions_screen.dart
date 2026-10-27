@@ -37,7 +37,7 @@ class SessionDetailScreen extends StatelessWidget {
                   children: [
                     Text(exercise.name, style: titleMedium),
                     const SizedBox(height: 8),
-                    if (exercise.isCardio)
+                    if (exercise.isTimed)
                       Text(exercise.summary)
                     else
                       for (var i = 0; i < exercise.sets.length; i++)

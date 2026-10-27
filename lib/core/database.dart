@@ -122,7 +122,7 @@ class AppDatabase extends _$AppDatabase {
   AppDatabase([QueryExecutor? executor])
     : super(executor ?? driftDatabase(name: 'latihan'));
   @override
-  int get schemaVersion => 2;
+  int get schemaVersion => 3;
 
   @override
   MigrationStrategy get migration => MigrationStrategy(
@@ -130,6 +130,15 @@ class AppDatabase extends _$AppDatabase {
       if (from < 2) {
         await m.createTable(syncLinks);
         await m.createTable(pendingDeletes);
+      }
+      if (from < 3) {
+        // Plans and sessions synced before exercises kept their kind, notes
+        // and catalog link: mark them changed on the server so the next sync
+        // receives them again.
+        await customStatement(
+          "UPDATE sync_links SET remote_updated_at = '' "
+          "WHERE kind IN ('plan', 'session')",
+        );
       }
     },
   );

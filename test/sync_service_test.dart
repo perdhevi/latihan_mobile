@@ -1,3 +1,4 @@
+import 'package:drift/drift.dart' show Value;
 import 'package:drift/native.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
@@ -123,6 +124,116 @@ void main() {
       expect((await sync()).pulled, 0);
     },
   );
+
+  /// A plan with a catalog-linked mobility exercise and a session logged
+  /// against it, made on another device.
+  Future<(Map<String, dynamic>, Map<String, dynamic>)>
+  remotePlanAndSession() async {
+    final plan = server.add('plans', {
+      'name': 'Mobility',
+      'notes': '',
+      'exercises': [
+        {
+          'exercise_id': 'catalog-1',
+          'name': 'Hip opener',
+          'kind': 'mobility',
+          'notes': 'Slowly',
+          'minutes': 10.0,
+        },
+      ],
+    });
+    final session = server.add('sessions', {
+      'name': 'Morning',
+      'notes': '',
+      'performed_at': '2026-10-01T07:00:00.000Z',
+      'plan_id': plan['id'],
+      'exercises': [
+        {
+          'plan_exercise_id': plan['exercises'][0]['id'],
+          'exercise_id': 'catalog-1',
+          'name': 'Hip opener',
+          'kind': 'mobility',
+          'notes': 'Felt good',
+          'minutes': 12.0,
+        },
+      ],
+    });
+    return (plan, session);
+  }
+
+  test(
+    'a pulled session is linked to its plan and keeps it when sent back',
+    () async {
+      await store.saveProfileName('Alex');
+      final (remotePlan, remoteSession) = await remotePlanAndSession();
+      await sync();
+      await store.load();
+      final pulled = store.history.single;
+      expect(pulled.plan!.name, 'Mobility');
+      expect(
+        pulled.exercises.single.planExerciseId,
+        pulled.plan!.exercises.single.id,
+      );
+
+      // A session stored without its plan, as earlier versions pulled them, and
+      // changed here since.
+      await db
+          .update(db.sessions)
+          .write(
+            SessionsCompanion(
+              planSnapshot: const Value(null),
+              notes: const Value('Edited here'),
+              updatedAt: Value(DateTime.now().toUtc()),
+            ),
+          );
+      final report = await sync();
+      expect(report.failures, isEmpty);
+      expect(report.pushed, 1);
+      expect(remoteSession['notes'], 'Edited here');
+      expect(remoteSession['plan_id'], remotePlan['id']);
+      final sent = (remoteSession['exercises'] as List).single as Map;
+      expect(sent['plan_exercise_id'], remotePlan['exercises'][0]['id']);
+      expect(sent['kind'], 'mobility');
+      expect(sent['notes'], 'Felt good');
+      expect(sent['exercise_id'], 'catalog-1');
+      await store.load();
+      expect(store.history.single.plan!.name, 'Mobility');
+    },
+  );
+
+  test('a pulled plan keeps exercise kind, notes and catalog link when edited here', () async {
+    await store.saveProfileName('Alex');
+    final plan = server.add('plans', {
+      'name': 'Stretch',
+      'notes': '',
+      'exercises': [
+        {
+          'exercise_id': 'catalog-2',
+          'name': 'Hamstrings',
+          'kind': 'stretching',
+          'notes': 'Hold 30 s',
+          'minutes': 5.0,
+        },
+      ],
+    });
+    await sync();
+    await store.load();
+    final local = store.plans.single;
+    expect(local.exercises.single.kind, 'stretching');
+    expect(local.exercises.single.isTimed, isTrue);
+
+    await store.savePlan(
+      Plan(id: local.id, name: 'Stretch v2', exercises: local.exercises),
+    );
+    expect((await sync()).failures, isEmpty);
+    expect(plan['name'], 'Stretch v2');
+    final sent = (plan['exercises'] as List).single as Map;
+    expect(sent['kind'], 'stretching');
+    expect(sent['notes'], 'Hold 30 s');
+    expect(sent['exercise_id'], 'catalog-2');
+    expect(sent['minutes'], 5.0);
+    expect(sent.containsKey('sets'), isFalse);
+  });
 
   test('a local edit is sent, a remote edit is received, deletions propagate both ways', () async {
     await store.saveProfileName('Alex');

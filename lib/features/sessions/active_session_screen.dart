@@ -198,7 +198,7 @@ class ActiveSessionScreen extends StatelessWidget {
               Card(
                 child: ListTile(
                   leading: Icon(
-                    active.exercises[i].isCardio
+                    active.exercises[i].isTimed
                         ? Icons.directions_run
                         : Icons.fitness_center,
                   ),

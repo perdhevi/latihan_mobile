@@ -239,7 +239,7 @@ class _ExerciseEditorState extends State<ExerciseEditor> {
       text: initial?.minutes == null ? null : formatNumber(initial!.minutes!),
     );
     bpm = TextEditingController(text: initial?.avgBpm?.toString());
-    cardio = initial?.isCardio ?? false;
+    cardio = initial?.isTimed ?? false;
     sets = [
       for (final s in initial?.sets ?? const <ExerciseSet>[])
         fields('${s.repetitions}', formatNumber(s.weightKg)),
@@ -415,9 +415,22 @@ class _ExerciseEditorState extends State<ExerciseEditor> {
                 ? null
                 : () async {
                     if (!form.currentState!.validate()) return;
+                    final initial = widget.initial;
                     final exercise = Exercise(
-                      planExerciseId: widget.initial?.planExerciseId,
+                      planExerciseId: initial?.planExerciseId,
+                      // A renamed exercise is no longer the catalog entry.
+                      exerciseId: initial?.name == name.text.trim()
+                          ? initial?.exerciseId
+                          : null,
                       name: name.text.trim(),
+                      // Mobility and stretching stay what they were while
+                      // timed; this screen only switches strength and cardio.
+                      kind: !cardio
+                          ? 'strength'
+                          : initial != null && initial.isTimed
+                          ? initial.kind
+                          : 'cardio',
+                      notes: initial?.notes ?? '',
                       sets: cardio
                           ? const []
                           : [

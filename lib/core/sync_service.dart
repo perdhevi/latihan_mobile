@@ -62,18 +62,17 @@ abstract class _Kind {
 
 DateTime _parse(Object? iso) => DateTime.parse(iso as String).toUtc();
 
-Map<String, dynamic> _planExercise(Exercise e) => e.isCardio
-    ? {
-        'name': e.name,
-        'kind': 'cardio',
-        'minutes': e.minutes,
-        'avg_bpm': ?e.avgBpm,
-      }
-    : {
-        'name': e.name,
-        'kind': 'strength',
-        'sets': [for (final s in e.sets) s.toJson()],
-      };
+Map<String, dynamic> _planExercise(Exercise e) => {
+  'exercise_id': ?e.exerciseId,
+  'name': e.name,
+  'kind': e.kind,
+  'notes': e.notes,
+  if (e.isTimed) ...{
+    'minutes': e.minutes,
+    'avg_bpm': ?e.avgBpm,
+  } else
+    'sets': [for (final s in e.sets) s.toJson()],
+};
 
 /// Two-way synchronization with `fitness-api`, with the local database as the
 /// source of truth.
@@ -97,7 +96,7 @@ class SyncService {
   Future<SyncReport> sync() async {
     await _profile();
     await _run(_PlanKind(db, _plans));
-    await _run(_SessionKind(db, _planLinks, _plans));
+    await _run(_SessionKind(db, _planLinks, _localPlanId, _plans));
     await _run(_MeasurementKind(db));
     await _sendDeletes();
     return _report;
@@ -154,7 +153,17 @@ class SyncService {
         return _plans.containsKey(link.remoteId) ? link.remoteId : null;
       }
     }
-    return null;
+    // A server plan no local plan stands for, such as one retired by an edit.
+    return _plans.containsKey(planId) ? planId : null;
+  }
+
+  /// The local ID of the plan the server knows as [remoteId]; a plan without
+  /// a local counterpart keeps the server's.
+  Future<String> _localPlanId(String remoteId) async {
+    for (final link in await _links('plan')) {
+      if (link.remoteId == remoteId) return link.localId;
+    }
+    return remoteId;
   }
 
   // -- Profile -------------------------------------------------------------
@@ -294,6 +303,7 @@ class SyncService {
       )..where((p) => p.kind.equals(kind.name))).get())
         p.remoteId,
     };
+    if (kind is _SessionKind) await kind.restorePlans(remote, links.values);
 
     Future<void> create(_Local local) async {
       final created = await api.post(
@@ -465,8 +475,34 @@ class _PlanKind implements _Kind {
 class _SessionKind implements _Kind {
   final AppDatabase db;
   final Future<String?> Function(String planId) remotePlanId;
+  final Future<String> Function(String remoteId) localPlanId;
   final Map<String, Map<String, dynamic>> plans;
-  _SessionKind(this.db, this.remotePlanId, this.plans);
+  _SessionKind(this.db, this.remotePlanId, this.localPlanId, this.plans);
+
+  /// The server names a session's plan only by `plan_id`; locally the session
+  /// keeps a copy of it, under the local plan's ID.
+  Future<Plan?> _snapshot(Object? planId) async {
+    final plan = plans[planId];
+    if (plan == null) return null;
+    return Plan.fromJson({...plan, 'id': await localPlanId(planId as String)});
+  }
+
+  /// Gives back the plan of linked sessions stored without one (pulled while
+  /// the client still expected a `plan_snapshot`), so that sending them does
+  /// not unlink them on the server. Their sync state is left as it was.
+  Future<void> restorePlans(
+    Map<String, Map<String, dynamic>> remote,
+    Iterable<SyncLinkRow> links,
+  ) async {
+    for (final link in links) {
+      final snapshot = await _snapshot(remote[link.remoteId]?['plan_id']);
+      if (snapshot == null) continue;
+      await (db.update(db.sessions)
+            ..where((s) => s.id.equals(link.localId) & s.planSnapshot.isNull()))
+          .write(SessionsCompanion(planSnapshot: Value(snapshot)));
+    }
+  }
+
   @override
   String get name => 'session';
   @override
@@ -528,7 +564,7 @@ class _SessionKind implements _Kind {
             notes: session.notes,
             performedAt: session.date.toUtc(),
             exercises: session.exercises,
-            planSnapshot: Value(session.plan),
+            planSnapshot: Value(await _snapshot(remote['plan_id'])),
             createdAt: _parse(remote['created_at']),
             updatedAt: _parse(remote['updated_at']),
           ),

@@ -59,38 +59,53 @@ class ExerciseSet {
       : '$repetitions reps · ${formatNumber(weightKg)} kg';
 }
 
-/// Strength exercises have [sets]; cardio exercises have [minutes] and an
-/// optional [avgBpm]. Plan entries carry an [id]; session entries logged
-/// against a plan entry carry its ID as [planExerciseId].
+/// Strength exercises have [sets]; timed ones (cardio, mobility, stretching)
+/// have [minutes] and an optional [avgBpm]. Plan entries carry an [id];
+/// session entries logged against a plan entry carry its ID as
+/// [planExerciseId]. [exerciseId] links the shared catalog entry, if any.
 class Exercise {
   final String? id;
   final String? planExerciseId;
+  final String? exerciseId;
   final String name;
+
+  /// `strength`, `cardio`, `mobility` or `stretching`, as the API names them.
+  /// Without one, an exercise with [minutes] is cardio and any other strength.
+  final String kind;
+  final String notes;
   final List<ExerciseSet> sets;
   final double? minutes;
   final int? avgBpm;
-  bool get isCardio => minutes != null;
+  bool get isTimed => kind != 'strength';
   Exercise({
     this.id,
     this.planExerciseId,
+    this.exerciseId,
     required this.name,
+    String? kind,
+    this.notes = '',
     this.sets = const [],
     this.minutes,
     this.avgBpm,
-  });
+  }) : kind = kind ?? (minutes != null ? 'cardio' : 'strength');
   Map<String, dynamic> toJson() => {
     'id': ?id,
     'plan_exercise_id': ?planExerciseId,
+    'exercise_id': ?exerciseId,
     'name': name,
-    'kind': isCardio ? 'cardio' : 'strength',
-    'sets': isCardio ? null : sets.map((s) => s.toJson()).toList(),
+    'kind': kind,
+    'notes': notes,
+    'sets': isTimed ? null : sets.map((s) => s.toJson()).toList(),
     'minutes': minutes,
     'avg_bpm': avgBpm,
   };
   factory Exercise.fromJson(Map<String, dynamic> json) => Exercise(
     id: json['id'] as String?,
     planExerciseId: json['plan_exercise_id'] as String?,
+    exerciseId: json['exercise_id'] as String?,
     name: json['name'] as String,
+    kind: json['kind'] as String?,
+    notes: json['notes'] as String? ?? '',
     sets: [
       for (final s in json['sets'] as List? ?? const [])
         ExerciseSet.fromJson(Map<String, dynamic>.from(s as Map)),
@@ -101,7 +116,10 @@ class Exercise {
 
   Exercise withId(String id) => Exercise(
     id: id,
+    exerciseId: exerciseId,
     name: name,
+    kind: kind,
+    notes: notes,
     sets: sets,
     minutes: minutes,
     avgBpm: avgBpm,
@@ -110,13 +128,16 @@ class Exercise {
   /// A session entry pre-filled with this plan entry's targets.
   Exercise logged() => Exercise(
     planExerciseId: id,
+    exerciseId: exerciseId,
     name: name,
+    kind: kind,
+    notes: notes,
     sets: sets,
     minutes: minutes,
     avgBpm: avgBpm,
   );
 
-  String get summary => isCardio
+  String get summary => isTimed
       ? '${formatNumber(minutes!)} min${avgBpm == null ? '' : ' · $avgBpm BPM'}'
       : '${sets.length} sets · ${sets.map((s) => s.label).join(', ')}';
 }

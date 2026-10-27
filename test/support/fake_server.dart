@@ -114,9 +114,14 @@ class FakeServer {
       'created_at': now,
       'updated_at': now,
     };
-    if (collection == 'sessions') {
-      record['plan_id'] = body['plan_id'];
-      record['plan_snapshot'] = plans[body['plan_id']];
+    // Like the API, a session names its plan by ID only and every exercise
+    // has notes.
+    if (collection == 'sessions') record['plan_id'] = body['plan_id'];
+    if (collection == 'plans' || collection == 'sessions') {
+      record['exercises'] = [
+        for (final e in record['exercises'] as List)
+          {...e as Map<String, dynamic>, 'notes': e['notes'] ?? ''},
+      ];
     }
     _collection(collection)![id] = record;
     _etags[id] = 'v${_next++}';
